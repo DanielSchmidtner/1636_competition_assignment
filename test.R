@@ -5,7 +5,8 @@ testing1 <- read_csv("/Users/raphaelboulat/Desktop/Github/1636_competition_assig
 training1 <- as.data.frame(unclass(training1), stringsAsFactors = TRUE) 
 testing1 <- as.data.frame(unclass(testing1), stringsAsFactors = TRUE) 
 
-## create numerical variables for the testing data
+
+## create numerical variables for the training data
 
 training1$state <- as.numeric(training1$state)
 training1$class <- as.numeric(training1$class)
@@ -95,4 +96,4 @@ gb_1 <- gb_caret$finalModel
 testing_imputed <- as.data.frame(testing_imputed)
 
 pred_gb_1 <- predict(gb_1 , newdata = as.matrix(testing_imputed))
-Metrics::rmse(actual = training_imputed$income, predicted = pred_gb_1$predictions)
+
