@@ -1,0 +1,237 @@
+---
+title: "Competition Assignment"
+author: "Daniel Schmidtner"
+date: "2023-02-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE, 
+                      warning = FALSE,
+                      fig.align = "center",
+                      fig.dim = c(5, 3.5))<
+
+
+if (suppressWarnings(!require("pacman"))){
+  install.packages("pacman")
+} 
+
+p_load(caret) # Classification and Regression Training
+p_load(data.table)
+p_load(here)
+p_load(missRanger)
+p_load(ranger) # for Random Forests
+p_load(tidyverse)
+p_load(xgboost) # for Extreme Gradient Boosting
+
+# Use doParallel to parallise
+p_load(doParallel)
+
+workers <- makeCluster(detectCores() - 1, type="SOCK")
+registerDoParallel(workers)
+
+# stopCluster(workers)
+# rm(workers)
+```
+
+## Load Data
+
+```{r Load Data}
+
+training_test_data <- fread(here("input_data", "trainig_test_data.csv"))
+
+holdout_data <- fread(here("input_data", "holdout_data.csv"))
+
+```
+
+## Calculate Log Income
+
+First we take the log of our independent variable
+
+```{r}
+
+# training_test_data <- training_test_data |>
+#   mutate(log_income = log(income)) |>
+#   select(-income) |>
+#   relocate(log_income)
+# 
+# # Histogram of log income
+# ggplot(training_test_data, aes(x=log_income)) + 
+#   geom_histogram()
+
+```
+
+
+## Check for NAs
+
+First we check for NAs in our data by using sapply to run the sum function through each of the columns. Next we convert each of the character columns to factorials.
+
+```{r Check for NAs}
+
+sapply(training_test_data, function(x) sum(is.na(x)))
+
+
+sapply(holdout_data, function(x) sum(is.na(x)))
+
+
+training_test_data <- as.data.frame(unclass(training_test_data), stringsAsFactors = TRUE) # Convert all character columns to factor
+
+holdout_data <- as.data.frame(unclass(holdout_data), stringsAsFactors = TRUE) # Convert all character columns to factor
+
+```
+
+## NA imputation
+
+To impute the NAs in the dataframe we used the package Missranger, which employs a random forest based imputation.
+
+```{r Impute the NAs}
+
+training_test_data$children <- training_test_data$children |>
+  replace_na(0)
+
+holdout_data$children <- holdout_data$children |>
+  replace_na(0)
+
+training_test_data_imputed <- missRanger(data = training_test_data,
+                                         formula = . ~ .,
+                                         num.trees = 20)
+
+holdout_data_imputed <- missRanger(data = holdout_data,
+                                   formula = . ~ .,
+                                   num.trees = 100)
+
+holdout_data_imputed <- holdout_data_imputed |>
+  add_column(income = NA) |>
+  relocate(income)
+
+# fwrite(training_test_data_imputed, here("input_data", "training_test_data_imputed.csv"))
+# fwrite(holdout_data_imputed, here("input_data", "holdout_data_imputed.csv"))
+# 
+# training_test_data_imputed <- fread(here("input_data", "training_test_data_imputed.csv"))
+# holdout_data_imputed <- fread(here("input_data", "holdout_data_imputed.csv"))
+# 
+# training_test_data_imputed <- as.data.frame(unclass(training_test_data_imputed), stringsAsFactors = TRUE) # Convert all character columns to factor
+# 
+# holdout_data_imputed <- as.data.frame(unclass(holdout_data_imputed), stringsAsFactors = TRUE) # Convert all character columns to factor
+
+```
+
+## Random Forest
+
+mtry: number of variables randomly sampled as candidates at each split
+min.node.size: minimum number of observations associated with each leaf node
+splitrule: criterion to find optimal split points
+sample.fraction: fraction of observations to sample in each tree
+replace: whether to sample with or without replacement
+respect.unordered.factors: handling of unordered factors in covariates
+
+```{r Random Forest}
+
+# We can tune the parameters mtry, splitrule and min.node.size
+
+# mtry          = number of variables randomly sampled as candidates at each split
+# splitrule     = criterion to find optimal split points ("variance", "gini", "information gain")
+# min.node.size = minimum number of observations associated with each leaf node
+
+# Then we decide which type of cross validation we are using for training
+control5 = trainControl(method = "cv", number = 5) # number = 5 means that we use a fivefold cross-validation, the higher the number, the more precise, but it will also take longer
+
+control10 = trainControl(method = "cv", number = 10) # number = 5 means that we use a fivefold cross-validation, the higher the number, the more precise, but it will also take longer
+
+
+# Next we set the parameters that we want to tune in the tuning grid
+# in the search for the best model one can try diffenerent sequences for mtry which are the randomly selected predictors
+
+rf_tuning_grid1 = expand.grid(mtry = 30, splitrule = "variance", min.node.size = 300)
+rf_tuning_grid2 = expand.grid(mtry = 30, splitrule = "variance", min.node.size = 200)
+rf_tuning_grid3 = expand.grid(mtry = 30, splitrule = "variance", min.node.size = 100)
+
+# In order to optimize the model we use the train function from the caret package and train them on the different grids
+rf_caret1 = caret::train(data = training_test_data_imputed, income ~ ., method = "ranger", trControl = control5, tuneGrid = rf_tuning_grid1, importance = "impurity")
+
+rf_caret2 = caret::train(data = training_test_data_imputed, income ~ ., method = "ranger", trControl = control5, tuneGrid = rf_tuning_grid2, importance = "impurity")
+
+rf_caret3 = caret::train(data = training_test_data_imputed, income ~ ., method = "ranger", trControl = control5, tuneGrid = rf_tuning_grid3, importance = "impurity")
+
+# Now we can extract the final model from the caret package. The output is again a ranger object.
+# The finalModel is chosen based on the RMSE
+rf_caret1_final = rf_caret1$finalModel
+rf_caret2_final = rf_caret2$finalModel
+rf_caret3_final = rf_caret3$finalModel
+
+saveRDS(rf_caret1, here("output_data", "rf_caret1.rds"))
+saveRDS(rf_caret2, here("output_data", "rf_caret2.rds"))
+saveRDS(rf_caret3, here("output_data", "rf_caret3.rds"))
+#rf_caret1 <- readRDS(here("input_data", "rf_caret1.rds"))
+
+```
+## The variable importance plot of the best performing random forest
+
+```{r}
+#importance
+rf_caret1_importance = data.frame(importance(rf_caret1_final)[order(importance(rf_caret1_final), decreasing=TRUE)])
+
+# adjust the row and column names of the data set
+names(rf_caret1_importance) = "importance"
+rf_caret1_importance$var_name = rownames(rf_caret1_importance)
+
+# select 10 most important covariates
+rf_caret1_importance = rf_caret1_importance[1:10,]
+
+# plot variable importance scores
+ggplot(rf_caret1_importance, aes(x = reorder(var_name, importance, mean), y = importance)) +
+  geom_point() +
+  labs(title = "Random Forest variable importance", subtitle = "presented as the mean decrease in the sum of squared \nresiduals when a variable is included in a tree split", x = "", y = "Mean decrease in sum of squared residuals") +
+  coord_flip() +
+  theme(axis.text.y = element_text(hjust = 0))
+```
+
+# We use the model to predict 
+
+```{r}
+
+#pred_rf_caret1_final = predict(rf_caret1_final, data = holdout_data_imputed) # Random Forest tuned with caret
+
+```
+
+
+## Extreme Gradient Boosting
+
+nrounds: maximum number of boosting iterations
+max_depth: maximum depth of a tree
+eta: learning rate of 0<eta<1 (lower value creates model that is slower to compute, but more resistant to overfitting)
+gamma: minimum loss reduction required to make another partition on a node
+colsample_bytree: fraction of columns used to construct each tree
+min_child_weight: minimum number of observations associated with each leaf node
+subsample: fraction of observations used to construct each tree
+
+```{r Extreme Gradient Boosting}
+
+# We create a tuning grid, setting the parameters that we want to tune and the corresponding values that should be tried out.
+gb_tuning_grid1 = expand.grid(nrounds = 100, max_depth = 3, eta = 0.1, gamma = 0.01, colsample_bytree = 1, min_child_weight = 1, subsample = 1)
+
+gb_tuning_grid2 = expand.grid(nrounds = 100, max_depth = 5, eta = 0.1, gamma = 0.01, colsample_bytree = 1, min_child_weight = 1, subsample = 1)
+
+gb_tuning_grid3 = expand.grid(nrounds = 100, max_depth = 10, eta = 0.1, gamma = 0.01, colsample_bytree = 1, min_child_weight = 1, subsample = 1)
+
+# To optimize the model we combine the packages caret and xgboost.
+gb_caret1 = train(data = training_test_data_imputed, income ~ ., method = "xgbTree", trControl = control5, tuneGrid = gb_tuning_grid1, verbosity = 0) # if you don't use verbosity there will be a warning
+
+gb_caret2 = train(data = training_test_data_imputed, income ~ ., method = "xgbTree", trControl = control5, tuneGrid = gb_tuning_grid2, verbosity = 0) # if you don't use verbosity there will be a warning
+
+gb_caret3 = train(data = training_test_data_imputed, income ~ ., method = "xgbTree", trControl = control5, tuneGrid = gb_tuning_grid3, verbosity = 0) # if you don't use verbosity there will be a warning
+
+
+# Now we can extract the final model from the caret package. The output is an xbg.Booster object.
+gb_caret1_finalModel = gb_caret1$finalModel
+gb_caret2_finalModel = gb_caret2$finalModel
+gb_caret3_finalModel = gb_caret3$finalModel
+
+saveRDS(gb_caret1, here("output_data", "gb_caret1.rds"))
+saveRDS(gb_caret2, here("output_data", "gb_caret2.rds"))
+saveRDS(gb_caret3, here("output_data", "gb_caret3.rds"))
+
+#pred_gb_1 = predict(gb_1, newdata = as.matrix(quindio_grid[,5:78]))
+
+```
