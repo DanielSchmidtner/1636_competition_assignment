@@ -10,13 +10,13 @@ testing <- as.data.frame(unclass(testing), stringsAsFactors = TRUE)
 
 ### filter for weird numbers --> not sure how to treat income_a/.../income_d (they only have 2,3,4 and "No change" --> maybe kick them out?)
 
-training <- training |>
-  filter(!race==4) |>
-  filter(!race==5) |>
-  filter(!family_reference==7) |>
-  filter(!family_reference==8)|>
-  filter(!family_reference==9)|>
-  filter(!family_reference==10)
+#training <- training |>
+# filter(!race==4) |>
+#  filter(!race==5) |>
+# filter(!family_reference==7) |>
+# filter(!family_reference==8)|>
+#  filter(!family_reference==9)|>
+#  filter(!family_reference==10)
 
 ### imputation 
 
@@ -28,6 +28,9 @@ testing_imputed <- missRanger(data = testing,
                               formula = . ~ . - income_a -income_b -income_c -income_d, 
                               num.trees = 100)
 
+training_imputed <- as.data.frame(unclass(training_imputed), stringsAsFactors = TRUE) 
+testing_imputed <- as.data.frame(unclass(testing_imputed), stringsAsFactors = TRUE) 
+
 ### random forest 
 
 control <- trainControl(method = "cv", number=5)
@@ -36,8 +39,18 @@ rf_caret = caret::train(data = training_imputed , income ~ ., method = "ranger",
 rf_1 <- rf_caret$finalModel
 rf_1
 
-pred_rf_1 <- predict(rf_caret, testing_imputed)
+tuning_grid_rf2 = expand.grid(mtry = 4, splitrule = "variance", min.node.size=100)
+rf_caret_2 = caret::train(data = training_imputed , income ~ ., method = "ranger", tuneGrid = tuning_grid_rf2 , trControl = control, importance="impurity")
+rf_2 <- rf_caret_2 $finalModel
+rf_2
+
+testing_imputed <- as.data.frame(testing_imputed)
+
+pred_rf_1 <- predict(rf_1, data = testing_imputed[, 1:29])
 Metrics::rmse(actual = training_imputed$income, predicted = pred_rf_1)
+
+pred_rf_2 <- predict(rf_2, data = testing_imputed)
+Metrics::rmse(actual = training_imputed$income, predicted = pred_rf_2)
 
 ### boosting 
 
@@ -49,4 +62,3 @@ gb_1 <- gb_caret$finalModel
 
 pred_gb_1 <- predict(gb_1 , newdata = testing_imputed)
 Metrics::rmse(actual = training_imputed$income, predicted = pred_gb_1)
-
